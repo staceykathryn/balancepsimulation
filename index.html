@@ -42,6 +42,27 @@
   <script type="text/babel">
     const { useState, useEffect, useRef, useMemo } = React;
 
+    // Defined outside App so React preserves the same slider DOM element
+    // while the simulation animation causes frequent App re-renders.
+    function Slider({ label, value, setValue, min, max, unit, tooltip }) {
+      return (
+        <div className="mb-3">
+          <div className="flex justify-between items-center mb-1">
+            <label className="text-xs text-gray-400" title={tooltip}>{label}</label>
+            <span className="text-sm font-bold text-teal-400">{value}{unit}</span>
+          </div>
+          <input
+            type="range"
+            min={min}
+            max={max}
+            value={value}
+            onChange={(e) => setValue(Number(e.target.value))}
+            className="w-full cursor-pointer"
+          />
+        </div>
+      );
+    }
+
     function App() {
       // Intervention levers - UPDATED LABELS
       const [nutritionEducation, setNutritionEducation] = useState(50);
@@ -55,7 +76,6 @@
       
       // Simulation state
       const [isRunning, setIsRunning] = useState(true);
-      const [tick, setTick] = useState(0);
       const [simulationMonths, setSimulationMonths] = useState(0); // NEW: Time counter
       const [riskHistory, setRiskHistory] = useState([45, 45, 45, 45, 45, 45, 45, 45, 45, 45]);
       const calculationsRef = useRef(calculations);
@@ -175,8 +195,6 @@
         if (!isRunning) return;
         
         const interval = setInterval(() => {
-          setTick(t => t + 1);
-          
           // Update people positions
           setPeople(prevPeople => {
             const healthySources = foodSources.filter(s => 
@@ -269,22 +287,6 @@
         };
       }, [isRunning, foodSources, calculations]);
 
-      const Slider = ({ label, value, setValue, min, max, unit, tooltip }) => (
-        <div className="mb-3">
-          <div className="flex justify-between items-center mb-1">
-            <label className="text-xs text-gray-400" title={tooltip}>{label}</label>
-            <span className="text-sm font-bold text-teal-400">{value}{unit}</span>
-          </div>
-          <input
-            type="range"
-            min={min}
-            max={max}
-            value={value}
-            onChange={(e) => setValue(Number(e.target.value))}
-            className="w-full cursor-pointer"
-          />
-        </div>
-      );
 
       const avgRisk = people.reduce((sum, p) => sum + p.risk, 0) / people.length;
       const peopleAtHealthy = people.filter(p => p.atHealthySource).length;
