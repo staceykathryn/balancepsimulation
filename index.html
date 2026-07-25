@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BALANCE-P Simulation Model</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    input[type="range"] {
+      -webkit-appearance: none;
+      appearance: none;
+      height: 6px;
+      border-radius: 3px;
+      background: #374151;
+      outline: none;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #14b8a6;
+      cursor: pointer;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.6; }
+      50% { opacity: 1; }
+    }
+    .pulse {
+      animation: pulse 2s infinite;
+    }
+  </style>
+</head>
+<body class="bg-gray-900">
+  <div id="root"></div>
+  
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useMemo } = React;
+
+    function App() {
+      // Intervention levers - UPDATED LABELS
+      const [nutritionEducation, setNutritionEducation] = useState(50);
+      const [stapleOrdinance, setStapleOrdinance] = useState(1);
+      const [stapleEnforcement, setStapleEnforcement] = useState(0); // NEW: Enforcement level
+      const [cornerStorePercent, setCornerStorePercent] = useState(30); // CHANGED: Now percentage
+      const [groceryFinancing, setGroceryFinancing] = useState(25); // RENAMED
+      const [farmersMarket, setFarmersMarket] = useState(10);
+      const [communityGardens, setCommunityGardens] = useState(3); // Separate from urban farms
+      const [urbanFarms, setUrbanFarms] = useState(1); // NEW: Urban farms
+      
+      // Simulation state
+      const [isRunning, setIsRunning] = useState(true);
+      const [tick, setTick] = useState(0);
+      const [simulationMonths, setSimulationMonths] = useState(0); // NEW: Time counter
+      const [riskHistory, setRiskHistory] = useState([45, 45, 45, 45, 45, 45, 45, 45, 45, 45]);
+      const calculationsRef = useRef(calculations);
+      
+      // Keep ref updated with latest calculations
+      useEffect(() => {
+        calculationsRef.current = calculations;
+      }, [calculations]);
+      const [smoothedRisk, setSmoothedRisk] = useState(45);
+      
+      // People state (agents)
+      const [people, setPeople] = useState(() => 
+        Array.from({ length: 40 }, (_, i) => ({
+          id: i,
+          x: 100 + Math.random() * 350,
+          y: 80 + Math.random() * 280,
+          vx: (Math.random() - 0.5) * 2,
+          vy: (Math.random() - 0.5) * 2,
+          risk: 0.3 + Math.random() * 0.4,
+          atHealthySource: false,
+          targetX: null,
+          targetY: null
+        }))
+      );
+
+      // Calculate food sources based on levers
+      const foodSources = useMemo(() => {
+        const sources = [];
+        
+        // Base grocery stores - Middle East Baltimore baseline (limited access)
+        sources.push({ type: 'grocery', x: 180, y: 180, radius: 40 });
+        
+        // Additional grocery stores based on financing (SLOW - takes years)
+        // Only appear after significant time with high financing
+        if (groceryFinancing > 50 && simulationMonths > 24) {
+          sources.push({ type: 'grocery', x: 350, y: 250, radius: 35 });
+        }
+        if (groceryFinancing > 80 && simulationMonths > 48) {
+          sources.push({ type: 'grocery', x: 250, y: 320, radius: 35 });
+        }
+        
+        // Corner stores with F&V (based on percentage enrolled AND enforcement)
+        const totalCornerStores = 10; // Total corner stores in area
+        const enrolledStores = Math.floor((cornerStorePercent / 100) * totalCornerStores);
+        
+        const cornerPositions = [
+          { x: 140, y: 200 }, { x: 260, y: 140 }, { x: 360, y: 220 },
+          { x: 200, y: 320 }, { x: 320, y: 300 }, { x: 400, y: 160 },
+          { x: 160, y: 280 }, { x: 280, y: 240 }, { x: 380, y: 340 },
+          { x: 220, y: 180 }
+        ];
+        
+        for (let i = 0; i < totalCornerStores; i++) {
+          // Determine if this store is healthy based on ordinance AND enforcement
+          const isEnrolled = i < enrolledStores;
+          const effectivelyHealthy = stapleOrdinance && isEnrolled && (stapleEnforcement > 30 || Math.random() < stapleEnforcement / 100);
+          
+          sources.push({ 
+            type: effectivelyHealthy ? 'cornerHealthy' : 'corner', 
+            x: cornerPositions[i].x, 
+            y: cornerPositions[i].y, 
+            radius: 25 
+          });
+        }
+        
+        // Community gardens (smaller, neighborhood-tended)
+        const gardenPositions = [
+          { x: 420, y: 200 }, { x: 180, y: 250 }, { x: 300, y: 340 },
+          { x: 360, y: 160 }, { x: 160, y: 320 }
+        ];
+        for (let i = 0; i < Math.min(communityGardens, gardenPositions.length); i++) {
+          sources.push({ type: 'garden', x: gardenPositions[i].x, y: gardenPositions[i].y, radius: 25 });
+        }
+        
+        // Urban farms (larger, more production-focused)
+        const farmPositions = [
+          { x: 440, y: 300 }, { x: 130, y: 150 }
+        ];
+        for (let i = 0; i < Math.min(urbanFarms, farmPositions.length); i++) {
+          sources.push({ type: 'urbanFarm', x: farmPositions[i].x, y: farmPositions[i].y, radius: 40 });
+        }
+        
+        // Farmers markets (based on vouchers)
+        if (farmersMarket > 20) {
+          sources.push({ type: 'farmersMarket', x: 280, y: 160, radius: 35 });
+        }
+        if (farmersMarket > 40) {
+          sources.push({ type: 'farmersMarket', x: 200, y: 340, radius: 35 });
+        }
+        
+        // Fast food (always present)
+        sources.push({ type: 'fastFood', x: 240, y: 220, radius: 30 });
+        sources.push({ type: 'fastFood', x: 340, y: 310, radius: 30 });
+        sources.push({ type: 'fastFood', x: 160, y: 340, radius: 25 });
+        
+        return sources;
+      }, [cornerStorePercent, stapleOrdinance, stapleEnforcement, groceryFinancing, communityGardens, urbanFarms, farmersMarket, simulationMonths]);
+
+      // Calculate pathway factors - UPDATED to include enforcement
+      const calculations = useMemo(() => {
+        const nutritionKnowledge = Math.min(100, 40 + nutritionEducation * 0.5);
+        // Enforcement matters! Without it, ordinance has reduced effect
+        const ordinanceEffect = stapleOrdinance * (0.3 + (stapleEnforcement / 100) * 0.7) * 15;
+        const fvAccess = Math.min(100, 30 + ordinanceEffect + (cornerStorePercent * 0.3) + groceryFinancing * 0.15 + farmersMarket * 0.2 + communityGardens * 1.5 + urbanFarms * 3);
+        const fvAffordability = Math.min(100, 35 + farmersMarket * 1.5 + groceryFinancing * 0.15 + communityGardens * 2 + urbanFarms * 4);
+        const fvConsumption = 2.5 + ((nutritionKnowledge - 40) / 100) * 0.5 + ((fvAccess - 30) / 100) * 0.8 + ((fvAffordability - 35) / 100) * 0.4;
+        const dietQuality = Math.min(100, 45 + (fvConsumption - 2.5) * 8);
+        const riskReduction = Math.min(50, (fvConsumption - 2.5) * 8);
+        const baselineRate = 45;
+        const projectedRate = baselineRate * (1 - riskReduction / 100);
+        
+        return { nutritionKnowledge, fvAccess, fvAffordability, fvConsumption, dietQuality, riskReduction, baselineRate, projectedRate };
+      }, [nutritionEducation, stapleOrdinance, stapleEnforcement, cornerStorePercent, groceryFinancing, farmersMarket, communityGardens, urbanFarms]);
+
+      // Animation loop
+      useEffect(() => {
+        if (!isRunning) return;
+        
+        const interval = setInterval(() => {
+          setTick(t => t + 1);
+          
+          // Update people positions
+          setPeople(prevPeople => {
+            const healthySources = foodSources.filter(s => 
+              s.type === 'grocery' || s.type === 'cornerHealthy' || s.type === 'garden' || s.type === 'urbanFarm' || s.type === 'farmersMarket'
+            );
+            
+            return prevPeople.map(person => {
+              let { x, y, vx, vy, risk, targetX, targetY } = person;
+              
+              const seekHealthyProb = calculations.nutritionKnowledge / 200;
+              
+              if (Math.random() < 0.02) {
+                if (Math.random() < seekHealthyProb && healthySources.length > 0) {
+                  const target = healthySources[Math.floor(Math.random() * healthySources.length)];
+                  targetX = target.x;
+                  targetY = target.y;
+                } else {
+                  targetX = 100 + Math.random() * 350;
+                  targetY = 80 + Math.random() * 280;
+                }
+              }
+              
+              if (targetX !== null && targetY !== null) {
+                const dx = targetX - x;
+                const dy = targetY - y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist > 5) {
+                  vx = (dx / dist) * 1.5;
+                  vy = (dy / dist) * 1.5;
+                } else {
+                  targetX = null;
+                  targetY = null;
+                }
+              } else {
+                vx += (Math.random() - 0.5) * 0.3;
+                vy += (Math.random() - 0.5) * 0.3;
+                vx = Math.max(-2, Math.min(2, vx)) * 0.95;
+                vy = Math.max(-2, Math.min(2, vy)) * 0.95;
+              }
+              
+              x += vx;
+              y += vy;
+              
+              if (x < 100) { x = 100; vx = Math.abs(vx); }
+              if (x > 460) { x = 460; vx = -Math.abs(vx); }
+              if (y < 80) { y = 80; vy = Math.abs(vy); }
+              if (y > 370) { y = 370; vy = -Math.abs(vy); }
+              
+              let atHealthySource = false;
+              for (const source of healthySources) {
+                const dist = Math.sqrt((x - source.x) ** 2 + (y - source.y) ** 2);
+                if (dist < source.radius + 10) {
+                  atHealthySource = true;
+                  risk = Math.max(0.1, risk - 0.005);
+                  break;
+                }
+              }
+              
+              for (const source of foodSources.filter(s => s.type === 'fastFood')) {
+                const dist = Math.sqrt((x - source.x) ** 2 + (y - source.y) ** 2);
+                if (dist < source.radius + 10) {
+                  risk = Math.min(0.9, risk + 0.002);
+                  break;
+                }
+              }
+              
+              const envFactor = (calculations.fvAccess - 50) / 500;
+              risk = Math.max(0.1, Math.min(0.9, risk - envFactor));
+              
+              return { ...person, x, y, vx, vy, risk, atHealthySource, targetX, targetY };
+            });
+          });
+          
+        }, 100);
+        
+        // Time counter - each interval represents ~1 week in simulation
+        const timeInterval = setInterval(() => {
+          setSimulationMonths(m => m + 0.25); // ~1 month per second
+        }, 1000);
+        
+        // Separate interval for graph updates
+        const graphInterval = setInterval(() => {
+          setRiskHistory(prev => [...prev.slice(1), calculationsRef.current.projectedRate]);
+        }, 500);
+        
+        return () => {
+          clearInterval(interval);
+          clearInterval(timeInterval);
+          clearInterval(graphInterval);
+        };
+      }, [isRunning, foodSources, calculations]);
+
+      const Slider = ({ label, value, setValue, min, max, unit, tooltip }) => (
+        <div className="mb-3">
+          <div className="flex justify-between items-center mb-1">
+            <label className="text-xs text-gray-400" title={tooltip}>{label}</label>
+            <span className="text-sm font-bold text-teal-400">{value}{unit}</span>
+          </div>
+          <input
+            type="range"
+            min={min}
+            max={max}
+            value={value}
+            onChange={(e) => setValue(Number(e.target.value))}
+            className="w-full cursor-pointer"
+          />
+        </div>
+      );
+
+      const avgRisk = people.reduce((sum, p) => sum + p.risk, 0) / people.length;
+      const peopleAtHealthy = people.filter(p => p.atHealthySource).length;
+      
+      // Format time display
+      const years = Math.floor(simulationMonths / 12);
+      const months = Math.floor(simulationMonths % 12);
+      const timeDisplay = years > 0 ? `${years}y ${months}m` : `${months}m`;
+
+      return (
+        <div className="min-h-screen bg-gray-900 text-white p-4">
+          {/* Header */}
+          <div className="text-center mb-4">
+            <h1 className="text-2xl font-bold text-teal-400">BALANCE-P Simulation Model</h1>
+            <p className="text-gray-500 text-sm">Food Access Interventions → Cancer Risk in Middle East Baltimore</p>
+            <p className="text-yellow-500 text-xs mt-1 bg-yellow-900/30 inline-block px-3 py-1 rounded">
+              ⚠️ PROTOTYPE — Modeled on Middle East Baltimore. Data shown is simulated for demonstration purposes.
+            </p>
+          </div>
+
+          <div className="max-w-6xl mx-auto grid grid-cols-12 gap-4">
+            {/* Left Panel - Controls */}
+            <div className="col-span-3 bg-gray-800 rounded-xl p-4">
+              <h2 className="text-sm font-bold text-teal-400 mb-3 flex items-center gap-2">
+                <span className="bg-teal-900 text-teal-400 rounded-full w-6 h-6 flex items-center justify-center text-xs">1</span>
+                Intervention Levers
+              </h2>
+              
+              {/* RENAMED: Nutrition Education Programs */}
+              <Slider 
+                label="Nutrition Education Programs" 
+                value={nutritionEducation} 
+                setValue={setNutritionEducation} 
+                min={0} max={100} unit="%" 
+                tooltip="Reach of nutrition education across multiple media"
+              />
+              
+              {/* Staple Foods Ordinance - Now with Enforcement */}
+              <div className="mb-3">
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs text-gray-400">Staple Foods Ordinance</label>
+                  <span className="text-sm font-bold text-teal-400">{stapleOrdinance ? 'Enacted' : 'Not Enacted'}</span>
+                </div>
+                <button
+                  onClick={() => setStapleOrdinance(stapleOrdinance ? 0 : 1)}
+                  className={`w-full py-1.5 rounded text-xs font-medium transition-colors ${
+                    stapleOrdinance ? 'bg-teal-600 text-white' : 'bg-gray-700 text-gray-400'
+                  }`}
+                >
+                  {stapleOrdinance ? 'Enacted' : 'Not Enacted'}
+                </button>
+              </div>
+              
+              {/* NEW: Enforcement Level */}
+              {stapleOrdinance === 1 && (
+                <Slider 
+                  label="Ordinance Enforcement Level" 
+                  value={stapleEnforcement} 
+                  setValue={setStapleEnforcement} 
+                  min={0} max={100} unit="%" 
+                  tooltip="Research shows ordinances are ineffective without enforcement (e.g., Minneapolis)"
+                />
+              )}
+              
+              {/* CHANGED: Corner Stores as Percentage */}
+              <Slider 
+                label="Corner Stores Enrolled" 
+                value={cornerStorePercent} 
+                setValue={setCornerStorePercent} 
+                min={0} max={100} unit="%" 
+                tooltip="Percentage of corner stores participating in healthy food programs"
+              />
+              
+              {/* RENAMED: Supermarket/Grocery Financing */}
+              <Slider 
+                label="Grocery Financing Initiative" 
+                value={groceryFinancing} 
+                setValue={setGroceryFinancing} 
+                min={0} max={100} unit="%" 
+                tooltip="Slow impact - new stores take years to open"
+              />
+              
+              <Slider 
+                label="Farmers Market Vouchers" 
+                value={farmersMarket} 
+                setValue={setFarmersMarket} 
+                min={0} max={50} unit="K" 
+              />
+              
+              {/* SEPARATED: Community Gardens vs Urban Farms */}
+              <Slider 
+                label="Community Gardens" 
+                value={communityGardens} 
+                setValue={setCommunityGardens} 
+                min={0} max={5} unit="" 
+                tooltip="Smaller, neighborhood-tended plots"
+              />
+              
+              <Slider 
+                label="Urban Farms" 
+                value={urbanFarms} 
+                setValue={setUrbanFarms} 
+                min={0} max={2} unit="" 
+                tooltip="Larger, production-focused operations"
+              />
+              
+              <button
+                onClick={() => setIsRunning(!isRunning)}
+                className={`w-full mt-3 py-2 rounded font-medium text-sm ${isRunning ? 'bg-red-600' : 'bg-green-600'}`}
+              >
+                {isRunning ? '⏸ Pause' : '▶ Play'}
+              </button>
+              
+              <button
+                onClick={() => setSimulationMonths(0)}
+                className="w-full mt-2 py-1.5 rounded font-medium text-xs bg-gray-700 hover:bg-gray-600"
+              >
+                Reset Time
+              </button>
+            </div>
+
+            {/* Center - Map Visualization */}
+            <div className="col-span-6 bg-gray-800 rounded-xl p-4">
+              <div className="flex justify-between items-center mb-2">
+                <h2 className="text-sm font-bold text-teal-400 flex items-center gap-2">
+                  <span className="bg-teal-900 text-teal-400 rounded-full w-6 h-6 flex items-center justify-center text-xs">2</span>
+                  Middle East Baltimore Food Environment
+                </h2>
+                {/* TIME COUNTER - NEW */}
+                <div className="bg-gray-900 px-3 py-1 rounded-lg">
+                  <span className="text-xs text-gray-500">Simulation Time: </span>
+                  <span className="text-sm font-bold text-yellow-400">{timeDisplay}</span>
+                </div>
+              </div>
+              
+              <svg viewBox="0 0 560 420" className="w-full bg-gray-900 rounded-lg">
+                {/* Map background */}
+                <rect x="90" y="70" width="380" height="320" fill="#1a1a2e" stroke="#374151" strokeWidth="2" rx="8"/>
+                
+                {/* Grid lines */}
+                {[0,1,2,3,4,5,6,7].map(i => (
+                  <line key={`h${i}`} x1="90" y1={70 + i * 40} x2="470" y2={70 + i * 40} stroke="#2a2a4a" strokeWidth="0.5"/>
+                ))}
+                {[0,1,2,3,4,5,6,7,8,9].map(i => (
+                  <line key={`v${i}`} x1={90 + i * 42} y1="70" x2={90 + i * 42} y2="390" stroke="#2a2a4a" strokeWidth="0.5"/>
+                ))}
+                
+                {/* Neighborhood labels */}
+                <text x="100" y="60" fontSize="9" fill="#6b7280" fontWeight="bold">North Avenue (North)</text>
+                <text x="115" y="90" fontSize="8" fill="#4a4a6a">Broadway</text>
+                <text x="300" y="90" fontSize="8" fill="#4a4a6a">Ashland Ave</text>
+                <text x="140" y="200" fontSize="8" fill="#4a4a6a">Monument St</text>
+                <text x="350" y="200" fontSize="8" fill="#4a4a6a">Eager St</text>
+                <text x="200" y="380" fontSize="8" fill="#4a4a6a">Orleans St (South)</text>
+                <text x="420" y="120" fontSize="7" fill="#10b981" opacity="0.6">Patterson Park →</text>
+                <text x="100" y="120" fontSize="7" fill="#3b82f6" opacity="0.6">← Johns Hopkins</text>
+                
+                {/* Food sources */}
+                {foodSources.map((source, i) => {
+                  let color, icon, label;
+                  switch(source.type) {
+                    case 'grocery':
+                      color = '#22c55e'; icon = '🏪'; label = 'Grocery';
+                      break;
+                    case 'cornerHealthy':
+                      color = '#84cc16'; icon = '🥬'; label = 'Healthy Corner';
+                      break;
+                    case 'corner':
+                      color = '#6b7280'; icon = '🏬'; label = 'Corner Store';
+                      break;
+                    case 'garden':
+                      color = '#10b981'; icon = '🌱'; label = 'Garden';
+                      break;
+                    case 'urbanFarm':
+                      color = '#059669'; icon = '🚜'; label = 'Urban Farm';
+                      break;
+                    case 'farmersMarket':
+                      color = '#f59e0b'; icon = '🧺'; label = 'Farmers Mkt';
+                      break;
+                    case 'fastFood':
+                      color = '#ef4444'; icon = '🍔'; label = 'Fast Food';
+                      break;
+                  }
+                  return (
+                    <g key={i}>
+                      <circle 
+                        cx={source.x} 
+                        cy={source.y} 
+                        r={source.radius} 
+                        fill={color} 
+                        opacity="0.2"
+                        className={source.type !== 'fastFood' ? 'pulse' : ''}
+                      />
+                      <circle cx={source.x} cy={source.y} r="12" fill={color} opacity="0.8"/>
+                      <text x={source.x} y={source.y + 4} textAnchor="middle" fontSize="10">{icon}</text>
+                    </g>
+                  );
+                })}
+                
+                {/* People (agents) */}
+                {people.map(person => (
+                  <g key={person.id}>
+                    <circle 
+                      cx={person.x} 
+                      cy={person.y} 
+                      r="5" 
+                      fill={person.atHealthySource ? '#22c55e' : `rgb(${Math.floor(person.risk * 255)}, ${Math.floor((1 - person.risk) * 180)}, 100)`}
+                      opacity="0.9"
+                    />
+                    {person.atHealthySource && (
+                      <circle cx={person.x} cy={person.y} r="8" fill="none" stroke="#22c55e" strokeWidth="1" opacity="0.5"/>
+                    )}
+                  </g>
+                ))}
+                
+                {/* Legend - Updated */}
+                <g transform="translate(480, 80)">
+                  <rect x="0" y="0" width="75" height="190" fill="#1f2937" stroke="#374151" strokeWidth="1.5" rx="6" opacity="0.95"/>
+                  <text x="37.5" y="15" fontSize="9" fill="#14b8a6" fontWeight="bold" textAnchor="middle">LEGEND</text>
+                  
+                  <text x="5" y="32" fontSize="8" fill="#9ca3af" fontWeight="bold">Food Sources:</text>
+                  
+                  <circle cx="12" cy="45" r="5" fill="#22c55e" opacity="0.8"/>
+                  <text x="22" y="48" fontSize="8" fill="#d1d5db">Grocery</text>
+                  
+                  <circle cx="12" cy="60" r="5" fill="#84cc16" opacity="0.8"/>
+                  <text x="22" y="63" fontSize="8" fill="#d1d5db">Corner+F&V</text>
+                  
+                  <circle cx="12" cy="75" r="5" fill="#6b7280" opacity="0.8"/>
+                  <text x="22" y="78" fontSize="8" fill="#d1d5db">Corner Store</text>
+                  
+                  <circle cx="12" cy="90" r="5" fill="#10b981" opacity="0.8"/>
+                  <text x="22" y="93" fontSize="8" fill="#d1d5db">Garden</text>
+                  
+                  <circle cx="12" cy="105" r="5" fill="#059669" opacity="0.8"/>
+                  <text x="22" y="108" fontSize="8" fill="#d1d5db">Urban Farm</text>
+                  
+                  <circle cx="12" cy="120" r="5" fill="#f59e0b" opacity="0.8"/>
+                  <text x="22" y="123" fontSize="8" fill="#d1d5db">Farmers Mkt</text>
+                  
+                  <circle cx="12" cy="135" r="5" fill="#ef4444" opacity="0.8"/>
+                  <text x="22" y="138" fontSize="8" fill="#d1d5db">Fast Food</text>
+                  
+                  <text x="5" y="157" fontSize="8" fill="#9ca3af" fontWeight="bold">Population:</text>
+                  
+                  <circle cx="12" cy="168" r="4" fill="#22c55e" opacity="0.9"/>
+                  <text x="22" y="171" fontSize="7" fill="#d1d5db">Low risk</text>
+                  
+                  <circle cx="12" cy="180" r="4" fill="#ff6b6b" opacity="0.9"/>
+                  <text x="22" y="183" fontSize="7" fill="#d1d5db">High risk</text>
+                </g>
+              </svg>
+              
+              {/* Real-time stats */}
+              <div className="grid grid-cols-4 gap-2 mt-2 text-center">
+                <div className="bg-gray-900 rounded p-2">
+                  <div className="text-lg font-bold text-green-400">{peopleAtHealthy}</div>
+                  <div className="text-xs text-gray-500">At Healthy Sources</div>
+                </div>
+                <div className="bg-gray-900 rounded p-2">
+                  <div className="text-lg font-bold text-teal-400">{foodSources.filter(s => s.type !== 'fastFood' && s.type !== 'corner').length}</div>
+                  <div className="text-xs text-gray-500">Healthy Food Sources</div>
+                </div>
+                <div className="bg-gray-900 rounded p-2">
+                  <div className="text-lg font-bold text-yellow-400">{(avgRisk * 100).toFixed(0)}%</div>
+                  <div className="text-xs text-gray-500">Avg Population Risk</div>
+                </div>
+                <div className="bg-gray-900 rounded p-2">
+                  <div className="text-lg font-bold text-blue-400">{Math.floor(cornerStorePercent / 10)}/10</div>
+                  <div className="text-xs text-gray-500">Stores Enrolled</div>
+                </div>
+              </div>
+
+              {/* Middle panel scenario notes */}
+              <div className="mt-3 space-y-2">
+                {stapleOrdinance === 1 && stapleEnforcement < 30 && (
+                  <div className="bg-yellow-900/50 border border-yellow-600 rounded-xl p-3">
+                    <p className="text-xs text-yellow-300">
+                      ⚠️ Low enforcement reduces ordinance effectiveness. Research shows unenforced ordinances have minimal impact.
+                    </p>
+                  </div>
+                )}
+
+                {groceryFinancing > 50 && simulationMonths < 24 && (
+                  <div className="bg-blue-900/50 border border-blue-600 rounded-xl p-3">
+                    <p className="text-xs text-blue-300">
+                      ℹ️ New grocery stores take 2+ years to open. Continue simulation to see financing impacts.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Right Panel - Outcomes */}
+            <div className="col-span-3 space-y-4">
+              {/* Risk trend chart */}
+              <div className="bg-gray-800 rounded-xl p-4">
+                <h2 className="text-sm font-bold text-teal-400 mb-2 flex items-center gap-2">
+                  <span className="bg-teal-900 text-teal-400 rounded-full w-6 h-6 flex items-center justify-center text-xs">3</span>
+                  CRC Risk Trend
+                </h2>
+                <svg viewBox="0 0 200 80" className="w-full">
+                  <rect x="0" y="0" width="200" height="80" fill="#111827" rx="4"/>
+                  <line x1="30" y1="10" x2="30" y2="65" stroke="#374151" strokeWidth="0.5"/>
+                  <line x1="30" y1="65" x2="190" y2="65" stroke="#374151" strokeWidth="0.5"/>
+                  <line x1="30" y1="37" x2="190" y2="37" stroke="#374151" strokeWidth="0.5" strokeDasharray="2"/>
+                  
+                  <text x="25" y="15" textAnchor="end" fontSize="6" fill="#6b7280">50</text>
+                  <text x="25" y="40" textAnchor="end" fontSize="6" fill="#6b7280">25</text>
+                  <text x="25" y="68" textAnchor="end" fontSize="6" fill="#6b7280">0</text>
+                  
+                  <polyline
+                    fill="none"
+                    stroke="#14b8a6"
+                    strokeWidth="2"
+                    points={riskHistory.map((val, i) => `${30 + i * 16},${65 - (val / 50) * 55}`).join(' ')}
+                  />
+                  
+                  <circle 
+                    cx={30 + 9 * 16} 
+                    cy={65 - (riskHistory[9] / 50) * 55} 
+                    r="4" 
+                    fill="#14b8a6"
+                  />
+                  
+                  <text x="100" y="78" textAnchor="middle" fontSize="6" fill="#6b7280">Time (Months) →</text>
+                </svg>
+              </div>
+              
+              {/* Outcome cards */}
+              <div className="bg-gradient-to-br from-teal-800 to-teal-900 rounded-xl p-4">
+                <h3 className="text-xs text-teal-300 mb-1">Projected CRC Risk</h3>
+                <div className="text-3xl font-bold">{calculations.projectedRate.toFixed(1)}</div>
+                <div className="text-xs text-teal-300">per 100,000</div>
+              </div>
+              
+              <div className="bg-gradient-to-br from-green-800 to-green-900 rounded-xl p-4">
+                <h3 className="text-xs text-green-300 mb-1">Risk Reduction</h3>
+                <div className="text-3xl font-bold">{calculations.riskReduction.toFixed(1)}%</div>
+                <div className="text-xs text-green-300">from baseline (45)</div>
+              </div>
+              
+              <div className="bg-gray-800 rounded-xl p-4">
+                <h3 className="text-xs text-gray-400 mb-2">Pathway Factors</h3>
+                <div className="space-y-2">
+                  {[
+                    { label: 'Knowledge', value: calculations.nutritionKnowledge },
+                    { label: 'F&V Access', value: calculations.fvAccess },
+                    { label: 'Affordability', value: calculations.fvAffordability },
+                    { label: 'Diet Quality', value: calculations.dietQuality }
+                  ].map(item => (
+                    <div key={item.label}>
+                      <div className="flex justify-between text-xs mb-0.5">
+                        <span className="text-gray-500">{item.label}</span>
+                        <span className="text-gray-300">{item.value.toFixed(0)}</span>
+                      </div>
+                      <div className="w-full bg-gray-700 rounded-full h-1.5">
+                        <div 
+                          className="bg-teal-500 h-1.5 rounded-full transition-all duration-300"
+                          style={{ width: `${item.value}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              
+
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div className="text-center mt-4 text-xs text-gray-600">
+            BALANCE-P: Baltimore Area Lifestyle And Nutrition Cancer-prevention Equity Project | SKCCC | Johns Hopkins Bloomberg School of Public Health
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.render(<App />, document.getElementById('root'));
+  </script>
+</body>
+</html>
