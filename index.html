@@ -76,15 +76,12 @@
       
       // Simulation state
       const [isRunning, setIsRunning] = useState(true);
-      const [simulationMonths, setSimulationMonths] = useState(0); // NEW: Time counter
-      const [riskHistory, setRiskHistory] = useState([45, 45, 45, 45, 45, 45, 45, 45, 45, 45]);
-      const calculationsRef = useRef(calculations);
-      
-      // Keep ref updated with latest calculations
-      useEffect(() => {
-        calculationsRef.current = calculations;
-      }, [calculations]);
-      const [smoothedRisk, setSmoothedRisk] = useState(45);
+      const [simulationMonths, setSimulationMonths] = useState(0);
+      const [realizedRisk, setRealizedRisk] = useState(45);
+      const [riskHistory, setRiskHistory] = useState([{ month: 0, rate: 45 }]);
+      const simulationMonthsRef = useRef(0);
+      const realizedRiskRef = useRef(45);
+      const lastRecordedMonthRef = useRef(0);
       
       // People state (agents)
       const [people, setPeople] = useState(() => 
@@ -190,6 +187,14 @@
         return { nutritionKnowledge, fvAccess, fvAffordability, fvConsumption, dietQuality, riskReduction, baselineRate, projectedRate };
       }, [nutritionEducation, stapleOrdinance, stapleEnforcement, cornerStorePercent, groceryFinancing, farmersMarket, communityGardens, urbanFarms]);
 
+      const calculationsRef = useRef(calculations);
+
+      // Keep the latest target available to the simulation timer without
+      // restarting the timer whenever a lever changes.
+      useEffect(() => {
+        calculationsRef.current = calculations;
+      }, [calculations]);
+
       // Animation loop
       useEffect(() => {
         if (!isRunning) return;
@@ -270,20 +275,35 @@
           
         }, 100);
         
-        // Time counter - each interval represents ~1 week in simulation
+        // Advance one simulated month per real second. The modeled CRC rate
+        // moves gradually toward the target implied by the current levers.
         const timeInterval = setInterval(() => {
-          setSimulationMonths(m => m + 0.25); // ~1 month per second
+          const stepMonths = 1;
+          const responseRatePerMonth = 0.04; // About 90% of the way to target in 5 years
+          const nextMonth = simulationMonthsRef.current + stepMonths;
+          const targetRate = calculationsRef.current.projectedRate;
+          const adjustmentFraction = 1 - Math.exp(-responseRatePerMonth * stepMonths);
+          const nextRisk = realizedRiskRef.current +
+            (targetRate - realizedRiskRef.current) * adjustmentFraction;
+
+          simulationMonthsRef.current = nextMonth;
+          realizedRiskRef.current = nextRisk;
+          setSimulationMonths(nextMonth);
+          setRealizedRisk(nextRisk);
+
+          const completedMonth = Math.floor(nextMonth);
+          if (completedMonth > lastRecordedMonthRef.current) {
+            lastRecordedMonthRef.current = completedMonth;
+            setRiskHistory(prev => [
+              ...prev,
+              { month: completedMonth, rate: nextRisk }
+            ].slice(-121)); // Keep up to 10 years of monthly history
+          }
         }, 1000);
-        
-        // Separate interval for graph updates
-        const graphInterval = setInterval(() => {
-          setRiskHistory(prev => [...prev.slice(1), calculationsRef.current.projectedRate]);
-        }, 500);
         
         return () => {
           clearInterval(interval);
           clearInterval(timeInterval);
-          clearInterval(graphInterval);
         };
       }, [isRunning, foodSources, calculations]);
 
@@ -295,6 +315,33 @@
       const years = Math.floor(simulationMonths / 12);
       const months = Math.floor(simulationMonths % 12);
       const timeDisplay = years > 0 ? `${years}y ${months}m` : `${months}m`;
+
+      const resetSimulation = () => {
+        const baselineRate = calculations.baselineRate;
+        simulationMonthsRef.current = 0;
+        realizedRiskRef.current = baselineRate;
+        lastRecordedMonthRef.current = 0;
+        setSimulationMonths(0);
+        setRealizedRisk(baselineRate);
+        setRiskHistory([{ month: 0, rate: baselineRate }]);
+      };
+
+      // The model's possible projected range is approximately 41-45 per 100,000,
+      // so the chart focuses on 40-46 instead of 0-50 to make modeled changes legible.
+      const chartMinRisk = 40;
+      const chartMaxRisk = 46;
+      const chartMaxMonth = Math.max(60, simulationMonths);
+      const chartData = riskHistory.length && riskHistory[riskHistory.length - 1].month === simulationMonths
+        ? riskHistory
+        : [...riskHistory, { month: simulationMonths, rate: realizedRisk }];
+      const riskToY = rate => 10 + ((chartMaxRisk - rate) / (chartMaxRisk - chartMinRisk)) * 55;
+      const monthToX = month => 30 + (month / chartMaxMonth) * 160;
+      const chartPoints = chartData
+        .map(point => `${monthToX(point.month)},${riskToY(point.rate)}`)
+        .join(' ');
+      const currentPoint = chartData[chartData.length - 1];
+      const chartMidYear = (chartMaxMonth / 24).toFixed(chartMaxMonth < 120 ? 1 : 0);
+      const chartEndYear = (chartMaxMonth / 12).toFixed(chartMaxMonth < 120 ? 1 : 0);
 
       return (
         <div className="min-h-screen bg-gray-900 text-white p-4">
@@ -401,10 +448,10 @@
               </button>
               
               <button
-                onClick={() => setSimulationMonths(0)}
+                onClick={resetSimulation}
                 className="w-full mt-2 py-1.5 rounded font-medium text-xs bg-gray-700 hover:bg-gray-600"
               >
-                Reset Time
+                Reset Simulation
               </button>
             </div>
 
@@ -584,41 +631,49 @@
             <div className="col-span-3 space-y-4">
               {/* Risk trend chart */}
               <div className="bg-gray-800 rounded-xl p-4">
-                <h2 className="text-sm font-bold text-teal-400 mb-2 flex items-center gap-2">
+                <h2 className="text-sm font-bold text-teal-400 mb-1 flex items-center gap-2">
                   <span className="bg-teal-900 text-teal-400 rounded-full w-6 h-6 flex items-center justify-center text-xs">3</span>
                   CRC Risk Trend
                 </h2>
-                <svg viewBox="0 0 200 80" className="w-full">
-                  <rect x="0" y="0" width="200" height="80" fill="#111827" rx="4"/>
+                <div className="flex justify-between text-xs mb-2">
+                  <span className="text-gray-400">Current: {realizedRisk.toFixed(1)}</span>
+                  <span className="text-teal-400">Target: {calculations.projectedRate.toFixed(1)}</span>
+                </div>
+                <svg viewBox="0 0 200 88" className="w-full">
+                  <rect x="0" y="0" width="200" height="88" fill="#111827" rx="4"/>
                   <line x1="30" y1="10" x2="30" y2="65" stroke="#374151" strokeWidth="0.5"/>
                   <line x1="30" y1="65" x2="190" y2="65" stroke="#374151" strokeWidth="0.5"/>
-                  <line x1="30" y1="37" x2="190" y2="37" stroke="#374151" strokeWidth="0.5" strokeDasharray="2"/>
+                  <line x1="30" y1={riskToY(43)} x2="190" y2={riskToY(43)} stroke="#374151" strokeWidth="0.5" strokeDasharray="2"/>
+                  <line x1="30" y1={riskToY(calculations.projectedRate)} x2="190" y2={riskToY(calculations.projectedRate)} stroke="#14b8a6" strokeWidth="0.75" strokeDasharray="3" opacity="0.55"/>
                   
-                  <text x="25" y="15" textAnchor="end" fontSize="6" fill="#6b7280">50</text>
-                  <text x="25" y="40" textAnchor="end" fontSize="6" fill="#6b7280">25</text>
-                  <text x="25" y="68" textAnchor="end" fontSize="6" fill="#6b7280">0</text>
+                  <text x="25" y={riskToY(46) + 2} textAnchor="end" fontSize="6" fill="#6b7280">46</text>
+                  <text x="25" y={riskToY(43) + 2} textAnchor="end" fontSize="6" fill="#6b7280">43</text>
+                  <text x="25" y={riskToY(40) + 2} textAnchor="end" fontSize="6" fill="#6b7280">40</text>
                   
                   <polyline
                     fill="none"
                     stroke="#14b8a6"
                     strokeWidth="2"
-                    points={riskHistory.map((val, i) => `${30 + i * 16},${65 - (val / 50) * 55}`).join(' ')}
+                    points={chartPoints}
                   />
                   
                   <circle 
-                    cx={30 + 9 * 16} 
-                    cy={65 - (riskHistory[9] / 50) * 55} 
-                    r="4" 
+                    cx={monthToX(currentPoint.month)}
+                    cy={riskToY(currentPoint.rate)}
+                    r="3.5" 
                     fill="#14b8a6"
                   />
-                  
-                  <text x="100" y="78" textAnchor="middle" fontSize="6" fill="#6b7280">Time (Months) →</text>
+
+                  <text x="30" y="74" textAnchor="middle" fontSize="5.5" fill="#6b7280">0</text>
+                  <text x="110" y="74" textAnchor="middle" fontSize="5.5" fill="#6b7280">{chartMidYear}y</text>
+                  <text x="190" y="74" textAnchor="middle" fontSize="5.5" fill="#6b7280">{chartEndYear}y</text>
+                  <text x="110" y="84" textAnchor="middle" fontSize="6" fill="#6b7280">Simulated time →</text>
                 </svg>
               </div>
               
               {/* Outcome cards */}
               <div className="bg-gradient-to-br from-teal-800 to-teal-900 rounded-xl p-4">
-                <h3 className="text-xs text-teal-300 mb-1">Projected CRC Risk</h3>
+                <h3 className="text-xs text-teal-300 mb-1">Target Projected CRC Risk</h3>
                 <div className="text-3xl font-bold">{calculations.projectedRate.toFixed(1)}</div>
                 <div className="text-xs text-teal-300">per 100,000</div>
               </div>
